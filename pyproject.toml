@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qqgroup-agent"
+version = "0.1.0"
+description = "QQ 群 RAG Agent API + CLI"
+readme = "README_API.md"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-or-later"}
+authors = [
+    {name = "Author"},
+]
+keywords = ["qq", "rag", "agent", "onnx", "lancedb"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "flask>=2.3.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "lancedb>=0.6.0",
+    "pyarrow>=15.0.0",
+    "onnxruntime>=1.17.0",
+    "transformers>=4.38.0",
+    "huggingface-hub>=0.20.0",
+    "optimum[onnxruntime]>=1.17.0",
+    "numpy>=1.26.0",
+    "pandas>=2.0.0",
+]
+
+[project.scripts]
+qqgroup-agent = "cli:main"
+qqgroup-api = "app:main"
+
+[project.urls]
+Homepage = "https://github.com/yourname/qqgroup-agent"
+Issues = "https://github.com/yourname/qqgroup-agent/issues"
+
+[tool.setuptools]
+py-modules = [
+    "agent",
+    "app",
+    "cli",
+    "config",
+    "database",
+    "embedding_client",
+    "llm_client",
+    "rag_engine",
+    "reranker",
+    "vector_store",
+]

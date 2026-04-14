@@ -1,0 +1,42 @@
+# 环境变量与敏感配置
+.env
+*.env
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 打包产物
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 运行时数据（自动生成）
+Data.db
+*.db-shm
+*.db-wal
+VectorDB/
+
+# 本地模型目录（首次启动自动下载，不应提交到 Git）
+models/
+
+# 日志
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Claude 工作区
+.claude/
