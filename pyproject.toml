@@ -36,8 +36,8 @@ cloudecho = "cli:main"
 cloudecho-api = "app:main"
 
 [project.urls]
-Homepage = "https://github.com/your-username/CloudEcho"
-Issues = "https://github.com/your-username/CloudEcho/issues"
+Homepage = "https://github.com/123321-QSTUDIO/cloudecho"
+Issues = "https://github.com/123321-QSTUDIO/cloudecho/issues"
 
 [tool.setuptools]
 py-modules = [
