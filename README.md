@@ -2,7 +2,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-> 为 QQ 群聊注入记忆的 RAG Agent
+> 为群聊注入记忆的 RAG Agent
 
 基于 Flask + LanceDB + 本地 ONNX 嵌入模型的商用级 RAG（检索增强生成）系统，为 QQ 群聊提供带历史上下文感知的 AI 回复能力。
 
@@ -122,7 +122,7 @@ CLI 内置命令：
 
 ```bash
 # 1. 克隆或上传源码到服务器
-cd /opt/cloudecho-qq
+cd /opt/cloudecho
 
 # 2. 创建 Python 虚拟环境（推荐）
 python -m venv venv
@@ -264,7 +264,7 @@ git commit -m "feat: initial release of QQ Group RAG Agent"
 
 # 4. 关联远程仓库（请先登录 GitHub 创建空仓库）
 git branch -M main
-git remote add origin https://github.com/你的用户名/cloudecho-qq.git
+git remote add origin https://github.com/你的用户名/cloudecho.git
 
 # 5. 推送
 git push -u origin main
@@ -272,7 +272,7 @@ git push -u origin main
 
 ### 发布到 PyPI（可选）
 
-如果你希望别人能用 `pipx install cloudecho-qq` 一键安装 CLI：
+如果你希望别人能用 `pipx install cloudecho` 一键安装 CLI：
 
 ```bash
 pip install build twine
@@ -282,7 +282,7 @@ python -m twine upload dist/*
 
 安装方：
 ```bash
-pipx install cloudecho-qq
+pipx install cloudecho
 cloudecho        # 启动 CLI
 cloudecho-api    # 启动 API 服务
 ```

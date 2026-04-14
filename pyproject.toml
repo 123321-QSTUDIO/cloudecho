@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cloudecho-qq"
+name = "cloudecho"
 version = "0.1.0"
-description = "云忆 CloudEcho - 为 QQ 群聊注入记忆的 RAG Agent"
+description = "云忆 CloudEcho - 为群聊注入记忆的 RAG Agent"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "GPL-3.0-or-later"}
@@ -36,8 +36,8 @@ cloudecho = "cli:main"
 cloudecho-api = "app:main"
 
 [project.urls]
-Homepage = "https://github.com/yourname/cloudecho-qq"
-Issues = "https://github.com/yourname/cloudecho-qq/issues"
+Homepage = "https://github.com/yourname/cloudecho"
+Issues = "https://github.com/yourname/cloudecho/issues"
 
 [tool.setuptools]
 py-modules = [
