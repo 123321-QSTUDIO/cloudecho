@@ -23,6 +23,7 @@ VectorDB/
 
 # 本地模型目录（首次启动自动下载，不应提交到 Git）
 models/
+AI/onnx_models/
 
 # 日志
 *.log
@@ -40,3 +41,6 @@ Thumbs.db
 
 # Claude 工作区
 .claude/
+
+# 私有业务文档
+插件AI逻辑.txt
