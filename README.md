@@ -23,7 +23,6 @@
 - **重排序模型**：bge-reranker-base（ONNX Runtime int8）
 - **LLM**：DeepSeek API（兼容 OpenAI 格式，可配置）
 - **数据库**：SQLite（WAL 模式）
-- **QQ 框架**：[MiraiCQ](https://github.com/super1207/MiraiCQ)（OneBot v11 兼容）
 
 ## 应用场景示例：SCPSL 服务器群组
 
@@ -85,34 +84,37 @@ CLI 内置命令：
 
 ---
 
-## 部署架构（MiraiCQ 集成）
+## 部署与集成
 
-推荐架构：
+### 架构说明
+
+本服务提供一组通用的 HTTP REST API，**不绑定任何特定的 QQ 机器人框架**。只要你的机器人框架（或插件）能发送 HTTP 请求，即可对接。
+
+典型的对接模式如下：
 
 ```
-┌─────────────┐      OneBot v11      ┌──────────────────┐
-│   MiraiCQ   │ ◄──────────────────► │  CQP / HTTP 插件  │
-│  (QQ 框架)   │                      │  (消息采集+发送)  │
-└─────────────┘                      └────────┬─────────┘
-                                              │
-                          ┌───────────────────┘
-                          │ ① POST /api/qq/message   (写入 SQLite)
-                          │ ② POST /api/sync/vectorstore (同步向量库)
-                          │ ③ POST /api/llm/rag      (获取 AI 回复)
-                          ▼
-                 ┌──────────────────┐
-                 │   QQ 群 RAG Agent │
-                 │   (本服务)        │
-                 │  Flask + SQLite  │
-                 │  + LanceDB + ONNX │
-                 └──────────────────┘
+┌─────────────────┐
+│  QQ 机器人框架   │  ← 任何支持 HTTP 的框架：NoneBot、Mirai、go-cqhttp 等
+│  (你的插件/脚本) │
+└────────┬────────┘
+         │
+         │ ① POST /api/qq/message      写入群消息到 SQLite
+         │ ② POST /api/sync/vectorstore 批量同步到向量库
+         │ ③ POST /api/llm/rag          获取 AI 回复
+         ▼
+┌─────────────────────┐
+│   QQ 群 RAG Agent   │
+│     (本服务)        │
+│  Flask + SQLite     │
+│  + LanceDB + ONNX   │
+└─────────────────────┘
 ```
 
-### 数据流说明
+### 集成示例参考
 
-1. **消息采集**：MiraiCQ 收到群消息后，通过插件或 HTTP 脚本调用 `POST /api/qq/message`，将消息写入 SQLite。
-2. **向量同步**：插件定时（如每 5 分钟）将缓存消息批量发送到 `POST /api/sync/vectorstore`，触发 SQLite → LanceDB 的增量同步。
-3. **AI 回复**：当群消息命中 AI 触发条件时，插件调用 `POST /api/llm/rag` 传入消息和缓存，Agent 检索历史并生成回复；插件收到 `response` 后通过 MiraiCQ 发送回 QQ 群。
+- **[MiraiCQ](https://github.com/super1207/MiraiCQ)**（OneBot v11 兼容）：如果你仍在使用 CoolQ 时代的老插件，MiraiCQ 可以低成本复用原有 CQP 插件。本项目作者早期即通过 MiraiCQ + 易语言插件的方式接入本服务。
+- **NoneBot2** / **go-cqhttp**：现代主流方案，可直接用 Python/Node 编写转发插件。
+- **自定义脚本**：任何能轮询或 Webhook 接收群消息并调用 HTTP API 的程序均可。
 
 ### 服务器部署示例
 
@@ -130,7 +132,7 @@ pip install -r requirements.txt
 # 4. 编辑环境变量
 vim .env
 
-# 5. 启动服务（可用 systemd/supervisor 托管）
+# 5. 启动服务（可用 systemd/supervisor 托管后台运行）
 python app.py
 ```
 
@@ -256,7 +258,7 @@ git init
 git add .
 
 # 3. 提交
-git commit -m "feat: initial release of QQ Group RAG Agent with MiraiCQ support"
+git commit -m "feat: initial release of QQ Group RAG Agent"
 
 # 4. 关联远程仓库（请先登录 GitHub 创建空仓库）
 git branch -M main
