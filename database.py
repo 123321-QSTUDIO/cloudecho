@@ -9,6 +9,7 @@ import sqlite3
 from datetime import datetime
 import os
 import logging
+from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
