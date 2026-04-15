@@ -43,7 +43,7 @@ rag_engine = RAGEngine(
     ),
     db_manager=db_manager,
 )
-agent = Agent(llm_client=llm_client, rag_engine=rag_engine)
+agent = Agent(llm_client=llm_client, rag_engine=rag_engine, db_manager=db_manager)
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

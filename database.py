@@ -51,6 +51,21 @@ class DatabaseManager:
                     PRIMARY KEY(group_id, table_name)
                 )
             """)
+            # 创建对话历史表
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS Conversation_History (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_conv_group_user
+                ON Conversation_History(group_id, user_id, created_at)
+            """)
             conn.commit()
             logger.info("数据库初始化完成")
 
@@ -166,3 +181,37 @@ class DatabaseManager:
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%'")
             tables = [row[0] for row in cursor.fetchall()]
             return len(tables)
+
+    def save_conversation_turn(self, group_id: str, user_id: str, role: str, content: str) -> int:
+        """保存单条对话记录"""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "INSERT INTO Conversation_History (group_id, user_id, role, content) VALUES (?, ?, ?, ?)",
+                (group_id, user_id, role, content)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_conversation_history(self, group_id: str, user_id: str, limit: int = 10) -> List[Dict]:
+        """获取指定用户在指定群的最近对话历史（按时间正序）"""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT role, content FROM Conversation_History WHERE group_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+                (group_id, user_id, limit * 2)
+            )
+            rows = cursor.fetchall()
+            # 按时间正序返回
+            return [
+                {"role": row[0], "content": row[1]}
+                for row in reversed(rows)
+            ]
+
+    def cleanup_conversation_history(self, days: int = 30) -> int:
+        """清理超过 N 天的旧对话记录"""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM Conversation_History WHERE created_at < datetime('now', ?)",
+                (f"-{days} days",)
+            )
+            conn.commit()
+            return cursor.rowcount

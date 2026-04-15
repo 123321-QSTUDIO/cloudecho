@@ -122,7 +122,7 @@ def rebuild_agent() -> Agent:
         ),
         db_manager=db_manager,
     )
-    return Agent(llm_client=llm_client, rag_engine=rag_engine)
+    return Agent(llm_client=llm_client, rag_engine=rag_engine, db_manager=db_manager)
 
 
 def print_help():

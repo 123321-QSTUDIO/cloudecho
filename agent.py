@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional
 
 from llm_client import LLMClient
 from rag_engine import RAGEngine
+from database import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -95,11 +96,15 @@ class Agent:
         self,
         llm_client: Optional[LLMClient] = None,
         rag_engine: Optional[RAGEngine] = None,
+        db_manager: Optional[DatabaseManager] = None,
         max_tool_rounds: int = 3,
+        max_history_turns: int = 10,
     ):
         self.llm_client = llm_client or LLMClient()
         self.rag_engine = rag_engine or RAGEngine()
+        self.db_manager = db_manager
         self.max_tool_rounds = max_tool_rounds
+        self.max_history_turns = max_history_turns
 
     def _build_system_prompt(self) -> str:
         return (
@@ -162,8 +167,12 @@ class Agent:
         # 构建对话历史
         messages = [
             {"role": "system", "content": self._build_system_prompt()},
-            {"role": "user", "content": self._build_user_prompt(group_id, user_id, user_name, content)},
         ]
+        if self.db_manager:
+            history = self.db_manager.get_conversation_history(group_id, user_id, limit=self.max_history_turns)
+            for h in history:
+                messages.append({"role": h["role"], "content": h["content"]})
+        messages.append({"role": "user", "content": self._build_user_prompt(group_id, user_id, user_name, content)})
 
         tool_calls_history = []
         rewritten_query = None
@@ -195,8 +204,12 @@ class Agent:
             if finish_reason != "tool_calls" or not tool_calls:
                 # 模型不再调用工具，输出最终回复
                 logger.info(f"Agent 在第 {round_idx + 1} 轮结束，生成最终回复")
+                final_response = assistant_content or "（模型未返回内容）"
+                if self.db_manager:
+                    self.db_manager.save_conversation_turn(group_id, user_id, "user", content)
+                    self.db_manager.save_conversation_turn(group_id, user_id, "assistant", final_response)
                 return {
-                    "response": assistant_content or "（模型未返回内容）",
+                    "response": final_response,
                     "sources": self._extract_sources(rag_tool),
                     "tool_calls_history": tool_calls_history,
                     "rewritten_query": rewritten_query or content,
@@ -265,6 +278,9 @@ class Agent:
             logger.error(f"最终回复生成失败：{str(e)}")
             final_content = "（Agent 思考超时，请稍后重试）"
 
+        if self.db_manager:
+            self.db_manager.save_conversation_turn(group_id, user_id, "user", content)
+            self.db_manager.save_conversation_turn(group_id, user_id, "assistant", final_content)
         return {
             "response": final_content,
             "sources": self._extract_sources(rag_tool),
@@ -299,8 +315,12 @@ class Agent:
 
         messages = [
             {"role": "system", "content": self._build_system_prompt()},
-            {"role": "user", "content": self._build_user_prompt(group_id, user_id, user_name, content)},
         ]
+        if self.db_manager:
+            history = self.db_manager.get_conversation_history(group_id, user_id, limit=self.max_history_turns)
+            for h in history:
+                messages.append({"role": h["role"], "content": h["content"]})
+        messages.append({"role": "user", "content": self._build_user_prompt(group_id, user_id, user_name, content)})
 
         rewritten_query = None
 
@@ -366,6 +386,9 @@ class Agent:
 
             if final_finish_reason != "tool_calls" or not tool_calls_list:
                 yield {"type": "response_complete", "content": full_content}
+                if self.db_manager:
+                    self.db_manager.save_conversation_turn(group_id, user_id, "user", content)
+                    self.db_manager.save_conversation_turn(group_id, user_id, "assistant", full_content)
                 return
 
             # 将 assistant message 加入历史
@@ -435,6 +458,9 @@ class Agent:
             full_content = "（Agent 思考超时，请稍后重试）"
 
         yield {"type": "response_complete", "content": full_content}
+        if self.db_manager:
+            self.db_manager.save_conversation_turn(group_id, user_id, "user", content)
+            self.db_manager.save_conversation_turn(group_id, user_id, "assistant", full_content)
 
     def _extract_sources(self, rag_tool: RAGSearchTool) -> List[Dict]:
         """从 RAG 工具的执行状态中回溯来源摘要"""
