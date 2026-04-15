@@ -10,6 +10,13 @@ import argparse
 import sys
 import io
 import os
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*has conflict with protected namespace.*",
+    category=UserWarning,
+)
 
 from dotenv import load_dotenv, set_key
 

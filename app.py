@@ -5,6 +5,14 @@ QQ 群 LLM API 服务
 提供用于处理 QQ 群交互的 REST API 接口
 """
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*has conflict with protected namespace.*",
+    category=UserWarning,
+)
+
 from flask import Flask, request, jsonify
 import logging
 import os
