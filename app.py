@@ -437,7 +437,7 @@ def preload_vector_databases():
     logger.info("向量数据库预同步完成")
 
 
-if __name__ == '__main__':
+def main():
     # 首次启动自动检测并下载模型
     ensure_all_models()
 
@@ -454,3 +454,7 @@ if __name__ == '__main__':
 
     logger.info(f"在 {host}:{port} 启动 QQ LLM API 服务")
     app.run(host=host, port=port, debug=debug, threaded=True)
+
+
+if __name__ == '__main__':
+    main()

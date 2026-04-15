@@ -33,7 +33,6 @@ dependencies = [
 
 [project.scripts]
 cloudecho = "cli:main"
-cloudecho-api = "app:main"
 
 [project.urls]
 Homepage = "https://github.com/123321-QSTUDIO/cloudecho"

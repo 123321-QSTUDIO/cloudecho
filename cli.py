@@ -172,10 +172,11 @@ def handle_config_command(text: str) -> bool:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="QQ Group Agent CLI")
-    parser.add_argument("--group", default="150204969", help="QQ 群号")
-    parser.add_argument("--user-id", default="123456", help="用户 QQ")
-    parser.add_argument("--user-name", default="CLI用户", help="用户昵称")
+    parser = argparse.ArgumentParser(description="云忆 CloudEcho - 统一入口")
+    parser.add_argument("--api", action="store_true", help="启动 Flask API 服务")
+    parser.add_argument("--group", default="150204969", help="QQ 群号（仅 CLI 模式）")
+    parser.add_argument("--user-id", default="123456", help="用户 QQ（仅 CLI 模式）")
+    parser.add_argument("--user-name", default="CLI用户", help="用户昵称（仅 CLI 模式）")
     args = parser.parse_args()
 
     # 启动时加载 .env
@@ -183,6 +184,11 @@ def main():
 
     # 首次启动自动检测并下载模型
     ensure_all_models()
+
+    if args.api:
+        from app import main as app_main
+        app_main()
+        return
 
     agent = rebuild_agent()
 
