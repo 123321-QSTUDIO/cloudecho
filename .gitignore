@@ -42,5 +42,6 @@ Thumbs.db
 # Claude 工作区
 .claude/
 
-# 私有业务文档
+# 私有业务文档 / AI 工作区备忘
 插件AI逻辑.txt
+GEMINI.md
