@@ -112,6 +112,7 @@ def rebuild_agent() -> Agent:
     """根据最新配置重建 Agent 及所有依赖"""
     # 重建各层组件，使新配置生效
     db_manager = DatabaseManager(db_path=Config.DB_PATH)
+    db_manager.init_database()
     llm_client = LLMClient()
     rag_engine = RAGEngine(
         embedding_client=EmbeddingClient(model_dir=Config.EMBEDDING_MODEL_DIR),
