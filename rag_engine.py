@@ -138,6 +138,7 @@ class RAGEngine:
         """
         将重排序后的候选消息组装为 LLM 上下文
         按时间正序排列，保留发言人、时间、内容
+        结果用 <Database_History_Search_Results> 强隔离符包裹，明确标注为归档资料
         """
         if not candidates:
             return "（暂无相关历史上下文）"
@@ -161,7 +162,12 @@ class RAGEngine:
         if len(context) > max_len:
             context = context[:max_len] + "\n...（上下文已截断）"
 
-        return context
+        return (
+            "<Database_History_Search_Results>\n"
+            f"{context}\n"
+            "</Database_History_Search_Results>\n"
+            "注：以上为数据库检索到的远期记录，仅供参考。"
+        )
 
     def rewrite_query(self, content: str, llm_client: LLMClient) -> str:
         """

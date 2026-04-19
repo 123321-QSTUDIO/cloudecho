@@ -58,11 +58,17 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     group_id TEXT NOT NULL,
                     user_id TEXT NOT NULL,
+                    user_name TEXT,
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # 兼容旧表：添加 user_name 字段
+            try:
+                conn.execute("ALTER TABLE Conversation_History ADD COLUMN user_name TEXT")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_conv_group_user
                 ON Conversation_History(group_id, user_id, created_at)
@@ -183,12 +189,12 @@ class DatabaseManager:
             tables = [row[0] for row in cursor.fetchall()]
             return len(tables)
 
-    def save_conversation_turn(self, group_id: str, user_id: str, role: str, content: str) -> int:
+    def save_conversation_turn(self, group_id: str, user_id: str, user_name: str, role: str, content: str) -> int:
         """保存单条对话记录"""
         with self._get_connection() as conn:
             cursor = conn.execute(
-                "INSERT INTO Conversation_History (group_id, user_id, role, content) VALUES (?, ?, ?, ?)",
-                (group_id, user_id, role, content)
+                "INSERT INTO Conversation_History (group_id, user_id, user_name, role, content) VALUES (?, ?, ?, ?, ?)",
+                (group_id, user_id, user_name, role, content)
             )
             conn.commit()
             return cursor.lastrowid
@@ -197,13 +203,13 @@ class DatabaseManager:
         """获取指定用户在指定群的最近对话历史（按时间正序）"""
         with self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT role, content FROM Conversation_History WHERE group_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+                "SELECT role, content, user_name, created_at FROM Conversation_History WHERE group_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
                 (group_id, user_id, limit * 2)
             )
             rows = cursor.fetchall()
             # 按时间正序返回
             return [
-                {"role": row[0], "content": row[1]}
+                {"role": row[0], "content": row[1], "user_name": row[2], "created_at": row[3]}
                 for row in reversed(rows)
             ]
 

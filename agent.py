@@ -8,6 +8,7 @@
 
 import json
 import logging
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from llm_client import LLMClient
@@ -109,13 +110,15 @@ class Agent:
     def _build_system_prompt(self) -> str:
         return (
             "你是群聊成员 DeepSleep，也是一个可以调用工具的 Agent。\n\n"
-            "【Agent 工作流 - 严格遵循】\n"
-            "1. 你拥有两类上下文，优先级如下：\n"
-            "   a) 【当前对话上下文】已自动包含在本轮消息中（你和该用户的最近对话）。\n"
-            "   b) 【群聊历史记录】存储在数据库中，需要通过 rag_search 检索。\n"
-            "2. 判断规则（按顺序执行）：\n"
-            "   - 如果用户提到'刚刚'、'刚才'、'之前'、'你刚才说'、'我前面说'等，或问题明显指向本轮对话内已出现的内容，**直接根据当前对话上下文回答，禁止调用 rag_search**。\n"
-            "   - 只有当问题涉及很久以前的群聊记录、其他群成员的往事、或当前对话上下文中完全没有的信息时，才调用 rag_search。\n"
+            "【记忆层级优先原则 - 严格遵循】\n"
+            "第一优先级（Immediate Context）：当前 messages 数组中的直接对话。\n"
+            "  用户提到的'刚才'、'刚才那句'、'你刚才说'、'我前面说'均指此类。\n"
+            "  所有带有相对时间戳（如'刚刚'、'5分钟前'）的消息都属于 Immediate Context。\n"
+            "第二优先级（Archived Memory）：rag_search 提供的结果（被 <Database_History_Search_Results> 包裹）。\n"
+            "  只有当第一优先级中找不到匹配项时，才引用此类。\n\n"
+            "【Agent 工作流】\n"
+            "1. 如果用户提到'刚刚'、'刚才'、'之前'、'你刚才说'、'我前面说'等，或问题明显指向本轮对话内已出现的内容，**直接根据当前对话上下文回答，禁止调用 rag_search**。\n"
+            "2. 只有当问题涉及很久以前的群聊记录、其他群成员的往事、或当前对话上下文中完全没有的信息时，才调用 rag_search。\n"
             "3. 一旦 rag_search 返回了上下文文本，你**必须立即停止调用工具**，直接根据上下文回答用户。\n"
             "4. 禁止为了'验证'或'补充'而反复调用 rag_search。每轮调用后必须评估：信息是否已足够回复？如果足够，立刻输出最终答案，不要再调用任何工具。\n\n"
             "【输出格式 - 最高优先级，违反将受惩罚】\n"
@@ -149,6 +152,41 @@ class Agent:
             f"【用户消息】{content}"
         )
 
+    @staticmethod
+    def _format_relative_time(dt_str: str) -> str:
+        """将 SQLite CURRENT_TIMESTAMP 转为相对时间描述"""
+        if not dt_str:
+            return ""
+        try:
+            dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+            now = datetime.now()
+            delta = now - dt
+            seconds = int(delta.total_seconds())
+            if seconds < 60:
+                return "刚刚"
+            elif seconds < 3600:
+                return f"{seconds // 60}分钟前"
+            elif seconds < 86400:
+                return f"{seconds // 3600}小时前"
+            else:
+                return f"{seconds // 86400}天前"
+        except Exception:
+            return ""
+
+    def _format_history_message(self, h: Dict) -> str:
+        """将 Conversation_History 记录统一封装为与当前消息一致的群聊格式"""
+        role = h["role"]
+        content = h["content"]
+        user_name = h.get("user_name", "")
+        created_at = h.get("created_at", "")
+        relative_time = self._format_relative_time(created_at)
+        time_tag = f"（{relative_time}）" if relative_time else ""
+
+        if role == "user":
+            return f"【发送人】{user_name}{time_tag}\n【用户消息】{content}"
+        else:  # assistant
+            return f"【发送人】DeepSleep{time_tag}\n【回复】{content}"
+
     def run(
         self,
         group_id: str,
@@ -176,7 +214,7 @@ class Agent:
         if self.db_manager:
             history = self.db_manager.get_conversation_history(group_id, user_id, limit=self.max_history_turns)
             for h in history:
-                messages.append({"role": h["role"], "content": h["content"]})
+                messages.append({"role": h["role"], "content": self._format_history_message(h)})
         messages.append({"role": "user", "content": self._build_user_prompt(group_id, user_id, user_name, content)})
 
         tool_calls_history = []
@@ -211,8 +249,8 @@ class Agent:
                 logger.info(f"Agent 在第 {round_idx + 1} 轮结束，生成最终回复")
                 final_response = assistant_content or "（模型未返回内容）"
                 if self.db_manager:
-                    self.db_manager.save_conversation_turn(group_id, user_id, "user", content)
-                    self.db_manager.save_conversation_turn(group_id, user_id, "assistant", final_response)
+                    self.db_manager.save_conversation_turn(group_id, user_id, user_name, "user", content)
+                    self.db_manager.save_conversation_turn(group_id, user_id, "DeepSleep", "assistant", final_response)
                 return {
                     "response": final_response,
                     "sources": self._extract_sources(rag_tool),
@@ -286,8 +324,8 @@ class Agent:
             final_content = "（Agent 思考超时，请稍后重试）"
 
         if self.db_manager:
-            self.db_manager.save_conversation_turn(group_id, user_id, "user", content)
-            self.db_manager.save_conversation_turn(group_id, user_id, "assistant", final_content)
+            self.db_manager.save_conversation_turn(group_id, user_id, user_name, "user", content)
+            self.db_manager.save_conversation_turn(group_id, user_id, "DeepSleep", "assistant", final_content)
         return {
             "response": final_content,
             "sources": self._extract_sources(rag_tool),
@@ -326,7 +364,7 @@ class Agent:
         if self.db_manager:
             history = self.db_manager.get_conversation_history(group_id, user_id, limit=self.max_history_turns)
             for h in history:
-                messages.append({"role": h["role"], "content": h["content"]})
+                messages.append({"role": h["role"], "content": self._format_history_message(h)})
         messages.append({"role": "user", "content": self._build_user_prompt(group_id, user_id, user_name, content)})
 
         rewritten_query = None
@@ -394,8 +432,8 @@ class Agent:
             if final_finish_reason != "tool_calls" or not tool_calls_list:
                 yield {"type": "response_complete", "content": full_content}
                 if self.db_manager:
-                    self.db_manager.save_conversation_turn(group_id, user_id, "user", content)
-                    self.db_manager.save_conversation_turn(group_id, user_id, "assistant", full_content)
+                    self.db_manager.save_conversation_turn(group_id, user_id, user_name, "user", content)
+                    self.db_manager.save_conversation_turn(group_id, user_id, "DeepSleep", "assistant", full_content)
                 return
 
             # 将 assistant message 加入历史
@@ -468,8 +506,8 @@ class Agent:
 
         yield {"type": "response_complete", "content": full_content}
         if self.db_manager:
-            self.db_manager.save_conversation_turn(group_id, user_id, "user", content)
-            self.db_manager.save_conversation_turn(group_id, user_id, "assistant", full_content)
+            self.db_manager.save_conversation_turn(group_id, user_id, user_name, "user", content)
+            self.db_manager.save_conversation_turn(group_id, user_id, "DeepSleep", "assistant", full_content)
 
     def _extract_sources(self, rag_tool: RAGSearchTool) -> List[Dict]:
         """从 RAG 工具的执行状态中回溯来源摘要"""
