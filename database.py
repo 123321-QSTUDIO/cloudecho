@@ -9,7 +9,7 @@ import sqlite3
 from datetime import datetime
 import os
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +212,57 @@ class DatabaseManager:
                 {"role": row[0], "content": row[1], "user_name": row[2], "created_at": row[3]}
                 for row in reversed(rows)
             ]
+
+    def get_messages_by_time_range(
+        self,
+        group_id: str,
+        start_time: str,
+        end_time: str,
+        keywords: Optional[str] = None,
+        limit: int = 30,
+    ) -> List[Dict]:
+        """
+        按时间范围查询消息（支持跨天表）
+        start_time / end_time 格式：YYYYMMDDHHMMSS 或更短的数字前缀
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%'"
+            )
+            tables = [row[0] for row in cursor.fetchall()]
+
+            results = []
+            for table in tables:
+                query = (
+                    f"SELECT id, group_id, user_name, user_id, time, content "
+                    f"FROM {table} WHERE group_id = ? AND time >= ? AND time <= ?"
+                )
+                params = [group_id, start_time, end_time]
+
+                if keywords:
+                    query += " AND content LIKE ?"
+                    params.append(f"%{keywords}%")
+
+                query += " ORDER BY time DESC LIMIT ?"
+                params.append(limit)
+
+                try:
+                    cursor = conn.execute(query, params)
+                    for row in cursor.fetchall():
+                        results.append({
+                            'id': row[0],
+                            'group_id': row[1],
+                            'user_name': row[2],
+                            'user_id': row[3],
+                            'time': row[4],
+                            'content': row[5],
+                        })
+                except Exception:
+                    continue
+
+            # 按时间正序排列，截断到 limit
+            results.sort(key=lambda x: x.get('time', ''))
+            return results[:limit]
 
     def cleanup_conversation_history(self, days: int = 30) -> int:
         """清理超过 N 天的旧对话记录"""

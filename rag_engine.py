@@ -109,13 +109,22 @@ class RAGEngine:
         if not candidates:
             return "（暂无相关历史档案）"
 
-        sorted_candidates = sorted(candidates, key=lambda x: x.get("time", ""))
+        # Token 安全截断：中文约 1.5-2 字/token，8000 字 ≈ 4000-5000 token
+        MAX_TOTAL_CHARS = 8000
+        MAX_SINGLE_CHARS = 300
+        total_chars = 0
         lines = []
+        truncated_count = 0
+
+        sorted_candidates = sorted(candidates, key=lambda x: x.get("time", ""))
         for item in sorted_candidates:
             user_name = item.get("user_name", "未知用户")
             user_id = item.get("user_id", "")
             content = item.get("content", "")
-            
+            # 单条截断
+            if len(content) > MAX_SINGLE_CHARS:
+                content = content[:MAX_SINGLE_CHARS] + "..."
+
             raw_time = item.get("time", "")
             formatted_time = ""
             if raw_time:
@@ -125,15 +134,21 @@ class RAGEngine:
                     formatted_time = f"{raw_time[4:6]}-{raw_time[6:8]} {raw_time[8:10]}:{raw_time[10:12]}"
                 else:
                     formatted_time = raw_time
-            
-            lines.append(f"[{formatted_time}] {user_name}({user_id}): {content}")
+
+            line = f"[{formatted_time}] {user_name}({user_id}): {content}"
+            if total_chars + len(line) > MAX_TOTAL_CHARS:
+                truncated_count = len(sorted_candidates) - len(lines)
+                break
+            lines.append(line)
+            total_chars += len(line) + 1  # +1 for newline
 
         context = "\n".join(lines)
+        extra_note = f"\n（另有 {truncated_count} 条档案因长度限制未展示）" if truncated_count else ""
         return (
             "<Long_Term_Memory_Database_Results>\n"
             f"{context}\n"
             "</Long_Term_Memory_Database_Results>\n"
-            "注：以上为长期历史档案，非当前对话内容。"
+            f"注：以上为长期历史档案，非当前对话内容。{extra_note}"
         )
 
     def rewrite_query(self, content: str, llm_client: LLMClient) -> str:

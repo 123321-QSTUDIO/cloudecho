@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 """
 支持多轮工具调用的 Agent 引擎
-目前内置工具：rag_search（群聊历史检索）
+内置工具：rag_search（语义检索）、time_filter（时间线筛选）
 架构可扩展，未来可加入更多工具
 """
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from llm_client import LLMClient
@@ -80,6 +80,161 @@ class RAGSearchTool(Tool):
             return f"（历史检索失败：{str(e)}）"
 
 
+class TimeFilterTool(Tool):
+    """时间筛选工具：按时间段检索群聊历史消息"""
+
+    name = "time_filter"
+    description = (
+        "按时间段检索该 QQ 群的聊天记录。当用户询问'昨天说了什么'、"
+        "'上周的讨论'、'3天前的情况'或指定具体日期时使用。"
+        "与 rag_search 不同，此工具按精确时间范围查询，适合时间线回顾。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "time_range": {
+                "type": "string",
+                "description": "时间范围描述，如：'昨天'、'上周'、'今天'、'3天前'、'2026-04-15'、'最近一周'",
+            },
+            "keywords": {
+                "type": "string",
+                "description": "可选，关键词过滤，只返回包含该关键词的消息",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "最大返回条数，默认30",
+            },
+        },
+        "required": ["time_range"],
+    }
+
+    def __init__(self, db_manager: DatabaseManager, group_id: str):
+        self.db_manager = db_manager
+        self.group_id = group_id
+        self._last_count = 0
+
+    def execute(self, time_range: str, keywords: Optional[str] = None, limit: int = 30) -> str:
+        logger.info(f"Agent 调用 time_filter: time_range='{time_range}', keywords='{keywords}'")
+        try:
+            start_time, end_time = self._parse_time_range(time_range)
+            results = self.db_manager.get_messages_by_time_range(
+                self.group_id, start_time, end_time, keywords=keywords, limit=limit
+            )
+            self._last_count = len(results)
+
+            if not results:
+                return f"（在 '{time_range}' 时间段内未找到相关消息）"
+
+            # Token 安全截断：中文约 1.5-2 字/token，6000 字 ≈ 3000-4000 token
+            MAX_TOTAL_CHARS = 6000
+            MAX_SINGLE_CHARS = 300
+            total_chars = 0
+            lines = []
+            truncated_count = 0
+
+            for item in results:
+                user_name = item.get("user_name", "未知用户")
+                user_id = item.get("user_id", "")
+                content = item.get("content", "")
+                raw_time = item.get("time", "")
+                # 单条截断
+                if len(content) > MAX_SINGLE_CHARS:
+                    content = content[:MAX_SINGLE_CHARS] + "..."
+                # 格式化时间
+                if len(raw_time) >= 12 and raw_time.isdigit():
+                    formatted_time = f"{raw_time[4:6]}-{raw_time[6:8]} {raw_time[8:10]}:{raw_time[10:12]}"
+                else:
+                    formatted_time = raw_time
+                line = f"[{formatted_time}] {user_name}({user_id}): {content}"
+                # 总长度截断
+                if total_chars + len(line) > MAX_TOTAL_CHARS:
+                    truncated_count = len(results) - len(lines)
+                    break
+                lines.append(line)
+                total_chars += len(line) + 1  # +1 for newline
+
+            context = "\n".join(lines)
+            extra_note = f"\n（另有 {truncated_count} 条消息因长度限制未展示）" if truncated_count else ""
+            return (
+                f"<Time_Range_Query_Results time_range='{time_range}' count='{len(results)}' shown='{len(lines)}'>\n"
+                f"{context}\n"
+                f"</Time_Range_Query_Results>{extra_note}"
+            )
+        except Exception as e:
+            logger.error(f"time_filter 执行失败：{str(e)}")
+            return f"（时间筛选失败：{str(e)}）"
+
+    @staticmethod
+    def _parse_time_range(time_desc: str) -> tuple:
+        """解析自然语言时间描述为 (start_time, end_time) 的 YYYYMMDDHHMMSS 字符串"""
+        import re
+        now = datetime.now()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        time_desc = time_desc.strip()
+
+        # 今天
+        if time_desc in ("今天", "今日"):
+            return (today.strftime("%Y%m%d%H%M%S"), now.strftime("%Y%m%d%H%M%S"))
+
+        # 昨天
+        if time_desc in ("昨天", "昨日"):
+            start = today - timedelta(days=1)
+            end = start.replace(hour=23, minute=59, second=59)
+            return (start.strftime("%Y%m%d%H%M%S"), end.strftime("%Y%m%d%H%M%S"))
+
+        # 前天
+        if time_desc in ("前天", "前日"):
+            start = today - timedelta(days=2)
+            end = start.replace(hour=23, minute=59, second=59)
+            return (start.strftime("%Y%m%d%H%M%S"), end.strftime("%Y%m%d%H%M%S"))
+
+        # 本周
+        if time_desc in ("本周", "这周", "这一周"):
+            weekday = today.weekday()  # Monday=0
+            start = today - timedelta(days=weekday)
+            return (start.strftime("%Y%m%d%H%M%S"), now.strftime("%Y%m%d%H%M%S"))
+
+        # 上周
+        if time_desc in ("上周", "上一周"):
+            weekday = today.weekday()
+            end = today - timedelta(days=weekday + 1)
+            start = end.replace(hour=0, minute=0, second=0)
+            return (start.strftime("%Y%m%d%H%M%S"), end.strftime("%Y%m%d%H%M%S"))
+
+        # 最近N天 / N天前
+        m = re.match(r'最近?(\d+)\s*天[前]?', time_desc)
+        if m:
+            n = int(m.group(1))
+            if "前" in time_desc:
+                start = today - timedelta(days=n)
+                end = start.replace(hour=23, minute=59, second=59)
+                return (start.strftime("%Y%m%d%H%M%S"), end.strftime("%Y%m%d%H%M%S"))
+            else:
+                start = today - timedelta(days=n - 1)
+                return (start.strftime("%Y%m%d%H%M%S"), now.strftime("%Y%m%d%H%M%S"))
+
+        # 最近N小时 / N小时前
+        m = re.match(r'最近?(\d+)\s*个?小时[前]?', time_desc)
+        if m:
+            n = int(m.group(1))
+            start = now - timedelta(hours=n)
+            return (start.strftime("%Y%m%d%H%M%S"), now.strftime("%Y%m%d%H%M%S"))
+
+        # 尝试 YYYY-MM-DD 或 YYYYMMDD
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                dt = datetime.strptime(time_desc, fmt)
+                start = dt.replace(hour=0, minute=0, second=0)
+                end = dt.replace(hour=23, minute=59, second=59)
+                return (start.strftime("%Y%m%d%H%M%S"), end.strftime("%Y%m%d%H%M%S"))
+            except ValueError:
+                pass
+
+        # 默认最近24小时
+        start = now - timedelta(hours=24)
+        return (start.strftime("%Y%m%d%H%M%S"), now.strftime("%Y%m%d%H%M%S"))
+
+
 class Agent:
     """
     多轮工具调用 Agent
@@ -109,11 +264,15 @@ class Agent:
             "  所有带有相对时间戳（如'刚刚'、'5分钟前'）的消息都属于 Immediate Context。\n"
             "第二优先级（Archived Memory）：rag_search 提供的结果（被 <Database_History_Search_Results> 包裹）。\n"
             "  只有当第一优先级中找不到匹配项时，才引用此类。\n\n"
+            "【工具选择指南】\n"
+            "- rag_search：语义检索工具。当用户问'群里有没有人说过XX'、'关于XX的讨论'、'XX的观点'等按内容主题查找时使用。\n"
+            "- time_filter：时间线检索工具。当用户问'昨天说了什么'、'上周的讨论'、'3天前的情况'、'2026-04-15的记录'等明确指定时间段时使用。\n"
+            "- 两个工具可以配合使用：先 time_filter 锁定时间段，再用 rag_search 在结果中深入检索。\n\n"
             "【Agent 工作流】\n"
-            "1. 如果用户提到'刚刚'、'刚才'、'之前'、'你刚才说'、'我前面说'等，或问题明显指向本轮对话内已出现的内容，**直接根据当前对话上下文回答，禁止调用 rag_search**。\n"
-            "2. 只有当问题涉及很久以前的群聊记录、其他群成员的往事、或当前对话上下文中完全没有的信息时，才调用 rag_search。\n"
-            "3. 一旦 rag_search 返回了上下文文本，你**必须立即停止调用工具**，直接根据上下文回答用户。\n"
-            "4. 禁止为了'验证'或'补充'而反复调用 rag_search。每轮调用后必须评估：信息是否已足够回复？如果足够，立刻输出最终答案，不要再调用任何工具。\n\n"
+            "1. 如果用户提到'刚刚'、'刚才'、'之前'、'你刚才说'、'我前面说'等，或问题明显指向本轮对话内已出现的内容，**直接根据当前对话上下文回答，禁止调用任何工具**。\n"
+            "2. 只有当问题涉及很久以前的群聊记录、其他群成员的往事、或当前对话上下文中完全没有的信息时，才根据问题类型选择 rag_search（语义）或 time_filter（时间线）。\n"
+            "3. 一旦工具返回了上下文文本，你**必须立即停止调用工具**，直接根据上下文回答用户。\n"
+            "4. 禁止为了'验证'或'补充'而反复调用工具。每轮调用后必须评估：信息是否已足够回复？如果足够，立刻输出最终答案，不要再调用任何工具。\n\n"
             "【输出格式 - 最高优先级，违反将受惩罚】\n"
             "1. 必须分条发送：用换行符(\\n)分隔每条消息，单条尽量不超过30字。\n"
             "2. 绝对禁止 Unicode Emoji（如😂❤️👍等）。表情只能用 [CQ:face,id=数字]。\n"
@@ -196,7 +355,8 @@ class Agent:
 
         # 初始化工具
         rag_tool = RAGSearchTool(self.rag_engine, group_id, self.llm_client)
-        tools = [rag_tool]
+        time_filter_tool = TimeFilterTool(self.db_manager, group_id) if self.db_manager else None
+        tools = [rag_tool] + ([time_filter_tool] if time_filter_tool else [])
         tools_schema = [t.to_openai_schema() for t in tools]
         tool_map = {t.name: t for t in tools}
 
@@ -346,8 +506,9 @@ class Agent:
         """
         logger.info(f"Agent 收到请求：群 {group_id}，用户 {user_id}，消息 '{content[:30]}...'")
 
-        rag_tool = RAGSearchTool(self.rag_engine, group_id, cache_messages)
-        tools = [rag_tool]
+        rag_tool = RAGSearchTool(self.rag_engine, group_id, self.llm_client)
+        time_filter_tool = TimeFilterTool(self.db_manager, group_id) if self.db_manager else None
+        tools = [rag_tool] + ([time_filter_tool] if time_filter_tool else [])
         tools_schema = [t.to_openai_schema() for t in tools]
         tool_map = {t.name: t for t in tools}
 

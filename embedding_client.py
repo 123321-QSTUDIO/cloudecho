@@ -31,7 +31,7 @@ class EmbeddingClient:
         import onnxruntime as ort
 
         logger.info(f"加载本地 tokenizer: {self.model_dir}")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, local_files_only=True)
 
         if not os.path.exists(self.onnx_path):
             raise FileNotFoundError(f"ONNX 模型不存在: {self.onnx_path}")
