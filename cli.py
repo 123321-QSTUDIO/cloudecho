@@ -418,6 +418,12 @@ def main():
                         query = args_json.get("query", "未知关键词")
                         console.print(f"\n[tool]🔍 正在召回: [cyan]{query}[/cyan][/tool]")
                         status.update(f"[thinking]正在检索向量库和缓存...[/thinking]")
+                    elif tool_name == "time_filter":
+                        time_range = args_json.get("time_range", "未知时间")
+                        keywords = args_json.get("keywords")
+                        kw_str = f"，关键词：[cyan]{keywords}[/cyan]" if keywords else ""
+                        console.print(f"\n[tool]📅 正在按时间筛选: [cyan]{time_range}[/cyan]{kw_str}[/tool]")
+                        status.update(f"[thinking]正在按时间段检索聊天记录...[/thinking]")
                     else:
                         console.print(f"\n[tool]调用工具 {tool_name}({arg_str})[/tool]")
                         status.update(f"[thinking]正在执行 {tool_name}...[/thinking]")
@@ -435,12 +441,12 @@ def main():
                     if tool_name == "rag_search":
                         # 提取隐藏的统计信息：<!-- RAG_STATS:v,f,n -->
                         stats_match = re.search(r"<!-- RAG_STATS:(\d+),(\d+),(\d+) -->", result)
-                        
+
                         if stats_match:
                             v_count = stats_match.group(1)
                             f_count = stats_match.group(2)
                             n_count = stats_match.group(3)
-                            
+
                             console.print(f"[success]✅ 召回完成：向量召回 [cyan]{v_count}[/cyan] 条，文本匹配 [cyan]{f_count}[/cyan] 条，最终筛选 [cyan]{n_count}[/cyan] 条。[/success]")
                         else:
                             # 兼容旧逻辑
@@ -449,12 +455,28 @@ def main():
                                 console.print(f"[warning]💡 召回失败：未找到相关历史内容。[/warning]")
                             else:
                                 console.print(f"[success]✅ 召回了 {count} 条内容。[/success]")
-                    
-                    # 移除预览中的统计注释，保持界面整洁
-                    clean_preview = re.sub(r"<!-- RAG_STATS:.*? -->", "", result).strip()
+
+                        # 移除预览中的统计注释，保持界面整洁
+                        clean_preview = re.sub(r"<!-- RAG_STATS:.*? -->", "", result).strip()
+                    elif tool_name == "time_filter":
+                        # 提取 Time_Range_Query_Results 的 count/shown 属性
+                        tf_match = re.search(r"count='(\d+)'\s+shown='(\d+)'", result)
+                        if tf_match:
+                            total = tf_match.group(1)
+                            shown = tf_match.group(2)
+                            console.print(f"[success]✅ 时间筛选完成：共 [cyan]{total}[/cyan] 条，展示 [cyan]{shown}[/cyan] 条。[/success]")
+                        else:
+                            if "未找到" in result:
+                                console.print(f"[warning]💡 该时间段内未找到聊天记录。[/warning]")
+                            else:
+                                console.print(f"[success]✅ 时间筛选完成。[/success]")
+                        clean_preview = result.strip()
+                    else:
+                        clean_preview = result.strip()
+
                     preview = clean_preview[:200] + "..." if len(clean_preview) > 200 else clean_preview
-                    console.print(Panel(preview, title="工具结果", border_style="dim", subtitle=f"共 {len(clean_preview)} 字符"))
-                    
+                    console.print(Panel(preview, title=f"工具结果 [{tool_name}]", border_style="dim", subtitle=f"共 {len(clean_preview)} 字符"))
+
                     status.update("[thinking]Agent 正在分析结果...[/thinking]")
                     status.start()
                     is_thinking = True
