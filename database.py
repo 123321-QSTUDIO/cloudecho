@@ -213,6 +213,46 @@ class DatabaseManager:
                 for row in reversed(rows)
             ]
 
+    @staticmethod
+    def _normalize_time(raw_time: str, table_date: str = None) -> str:
+        """
+        将各种时间格式归一化为 YYYYMMDDHHMMSS 的 14 位字符串，用于比较。
+        支持的输入格式：
+          - 14位数字：YYYYMMDDHHMMSS
+          - 6位数字：HHMMSS → 用 table_date 或今天补齐日期
+          - 带分隔符：YYYY-MM-DD HH:MM:SS / YYYY/MM/DD HH:MM:SS
+        无法解析时返回空字符串。
+        """
+        if not raw_time:
+            return ""
+        s = str(raw_time).strip()
+
+        # 14位纯数字
+        if s.isdigit() and len(s) == 14:
+            return s
+
+        # 6位纯数字（HHMMSS），需要补齐日期
+        if s.isdigit() and len(s) == 6:
+            date_prefix = table_date or datetime.now().strftime("%Y%m%d")
+            return date_prefix + s
+
+        # 8位纯数字（YYYYMMDD），补齐时间
+        if s.isdigit() and len(s) == 8:
+            return s + "000000"
+
+        # 标准格式带分隔符
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
+            try:
+                return datetime.strptime(s, fmt).strftime("%Y%m%d%H%M%S")
+            except ValueError:
+                continue
+
+        # 12位纯数字：YYMMDDHHMMSS
+        if s.isdigit() and len(s) == 12:
+            return "20" + s
+
+        return ""
+
     def get_messages_by_time_range(
         self,
         group_id: str,
@@ -222,9 +262,16 @@ class DatabaseManager:
         limit: int = 30,
     ) -> List[Dict]:
         """
-        按时间范围查询消息（支持跨天表）
-        start_time / end_time 格式：YYYYMMDDHHMMSS 或更短的数字前缀
+        按时间范围查询消息（支持跨天表）。
+        由于 SQLite 中 time 字段格式不统一（6位 HHMMSS / 14位 YYYYMMDDHHMMSS），
+        不在 SQL 中直接比较，而是先按 group_id 和 keywords 查出后在 Python 中过滤。
         """
+        # 从表名提取日期，用于补齐 6 位时间
+        def _extract_date_from_table(table_name: str) -> str:
+            if table_name.startswith("Chat_") and len(table_name) == 13:
+                return table_name[5:]  # Chat_YYYYMMDD → YYYYMMDD
+            return datetime.now().strftime("%Y%m%d")
+
         with self._get_connection() as conn:
             cursor = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Chat_%'"
@@ -233,35 +280,44 @@ class DatabaseManager:
 
             results = []
             for table in tables:
+                table_date = _extract_date_from_table(table)
                 query = (
                     f"SELECT id, group_id, user_name, user_id, time, content "
-                    f"FROM {table} WHERE group_id = ? AND time >= ? AND time <= ?"
+                    f"FROM {table} WHERE group_id = ?"
                 )
-                params = [group_id, start_time, end_time]
+                params = [group_id]
 
                 if keywords:
                     query += " AND content LIKE ?"
                     params.append(f"%{keywords}%")
 
-                query += " ORDER BY time DESC LIMIT ?"
-                params.append(limit)
+                query += " ORDER BY id DESC LIMIT ?"
+                # 放宽 limit，防止过滤后数据太少
+                params.append(limit * 3)
 
                 try:
                     cursor = conn.execute(query, params)
                     for row in cursor.fetchall():
-                        results.append({
-                            'id': row[0],
-                            'group_id': row[1],
-                            'user_name': row[2],
-                            'user_id': row[3],
-                            'time': row[4],
-                            'content': row[5],
-                        })
+                        raw_time = row[4] if row[4] else ""
+                        norm_time = self._normalize_time(raw_time, table_date)
+                        # 只有成功解析且落在范围内才保留
+                        if norm_time and start_time <= norm_time <= end_time:
+                            results.append({
+                                'id': row[0],
+                                'group_id': row[1],
+                                'user_name': row[2],
+                                'user_id': row[3],
+                                'time': raw_time,
+                                'content': row[5],
+                            })
                 except Exception:
                     continue
 
-            # 按时间正序排列，截断到 limit
-            results.sort(key=lambda x: x.get('time', ''))
+            # 按归一化时间正序排列，截断到 limit
+            def _sort_key(item):
+                return self._normalize_time(item.get('time', ''), _extract_date_from_table(f"Chat_{datetime.now().strftime('%Y%m%d')}"))
+
+            results.sort(key=_sort_key)
             return results[:limit]
 
     def cleanup_conversation_history(self, days: int = 30) -> int:
