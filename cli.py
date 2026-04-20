@@ -311,23 +311,28 @@ def main():
         agent = rebuild_agent()
 
     # 自动同步最近 3 天的历史消息到向量库
-    with console.status("[bold cyan]正在同步最近 3 天的历史消息...[/bold cyan]", spinner="bouncingBar"):
-        try:
-            # 获取所有有记录的群组
-            active_groups = agent.db_manager.list_active_groups()
-            if args.group not in active_groups:
-                active_groups.append(args.group)
-            
-            with agent.db_manager._get_connection() as conn:
-                for gid in active_groups:
-                    try:
-                        agent.rag_engine.vector_store.sync_recent_tables(conn, gid, days=3)
-                    except Exception as e:
-                        console.print(f"[warning]同步群 {gid} 失败: {e}[/warning]")
-                    
-            console.print(f"[success]✨ 已自动同步 {len(active_groups)} 个群组的最近 3 天消息。[/success]")
-        except Exception as e:
-            console.print(f"[error]同步过程出错: {e}[/error]")
+    console.print("[bold cyan]正在同步最近 3 天的历史消息...[/bold cyan]")
+    try:
+        active_groups = agent.db_manager.list_active_groups()
+        if args.group not in active_groups:
+            active_groups.append(args.group)
+
+        with agent.db_manager._get_connection() as conn:
+            for gid in active_groups:
+                try:
+                    res = agent.rag_engine.vector_store.sync_recent_tables(conn, gid, days=3)
+                    group_total = res.get("total_rows", 0)
+                    group_synced = res.get("total_synced", 0)
+                    if group_total > 0:
+                        console.print(f"  [success]群 {gid}：同步 {group_synced}/{group_total} 条[/success]")
+                    else:
+                        console.print(f"  [dim]群 {gid}：无新增消息[/dim]")
+                except Exception as e:
+                    console.print(f"  [warning]同步群 {gid} 失败: {e}[/warning]")
+
+        console.print(f"[success]✨ 已自动同步 {len(active_groups)} 个群组的最近 3 天消息。[/success]")
+    except Exception as e:
+        console.print(f"[error]同步过程出错: {e}[/error]")
 
     console.print(Panel.fit(
         f"[bold blue]CloudEcho 云忆[/bold blue] Agent CLI 已启动\n"

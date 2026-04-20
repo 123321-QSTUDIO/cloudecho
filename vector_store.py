@@ -89,13 +89,13 @@ class LanceDBManager:
         except Exception as e:
             logger.error(f"更新同步元数据失败：{str(e)}")
 
-    def sync_table(self, sqlite_conn, group_id: str, date_str: str) -> bool:
+    def sync_table(self, sqlite_conn, group_id: str, date_str: str) -> Dict:
         """
         从 SQLite 指定日期表增量同步到 LanceDB
         :param sqlite_conn: SQLite 连接对象
         :param group_id: QQ 群号
         :param date_str: 日期字符串（YYYYMMDD）
-        :return: 是否成功同步
+        :return: 同步结果字典 {success: bool, synced: int, total: int, max_id: int}
         """
         sqlite_table = f"Chat_{date_str}"
         lance_table = self._get_table_name(group_id, date_str)
@@ -109,9 +109,9 @@ class LanceDBManager:
             if not check_cursor.fetchone():
                 # 如果是今天的表，可能还没产生消息，不报错
                 if date_str == datetime.now().strftime("%Y%m%d"):
-                    return False
+                    return {"success": False, "synced": 0, "total": 0, "max_id": 0, "reason": "table_not_exists"}
                 logger.warning(f"跳过同步：SQLite 表 {sqlite_table} 不存在")
-                return False
+                return {"success": False, "synced": 0, "total": 0, "max_id": 0, "reason": "table_not_exists"}
 
             cursor = sqlite_conn.execute(
                 f"SELECT id, group_id, user_name, user_id, time, content FROM {sqlite_table} "
@@ -121,17 +121,18 @@ class LanceDBManager:
             rows = cursor.fetchall()
         except Exception as e:
             logger.warning(f"读取 SQLite 表 {sqlite_table} 失败（可能表不存在）：{str(e)}")
-            return False
+            return {"success": False, "synced": 0, "total": 0, "max_id": 0, "reason": f"read_error: {e}"}
 
         if not rows:
             logger.debug(f"表 {lance_table} 无新增数据，跳过同步")
-            return True
+            return {"success": True, "synced": 0, "total": 0, "max_id": last_synced_id}
 
-        logger.info(f"正在同步 {len(rows)} 条消息到 {lance_table}（分批编码，每批 32 条）")
+        total = len(rows)
+        logger.info(f"开始同步 {total} 条消息到 {lance_table}（分批编码，每批 32 条）")
 
         # 分批处理，避免一次性 encode 大 batch 导致 ONNX Runtime 内存暴涨
         batch_size = 32
-        total = len(rows)
+        synced = 0
         max_id = 0
 
         for start in range(0, total, batch_size):
@@ -141,7 +142,7 @@ class LanceDBManager:
 
             if embeddings.shape[0] != len(chunk):
                 logger.error(f"批次 {start}-{start + len(chunk)} 嵌入数量不匹配，同步失败")
-                return False
+                return {"success": False, "synced": synced, "total": total, "max_id": max_id, "reason": "embedding_mismatch"}
 
             data = {
                 "vector": [embeddings[i].tolist() for i in range(len(chunk))],
@@ -168,27 +169,50 @@ class LanceDBManager:
                         logger.warning(f"创建全文索引失败: {e}")
             except Exception as e:
                 logger.error(f"写入 LanceDB 批次 {start} 失败：{str(e)}")
-                return False
+                return {"success": False, "synced": synced, "total": total, "max_id": max_id, "reason": f"write_error: {e}"}
 
+            synced += len(chunk)
             max_id = max(max_id, max(row[0] for row in chunk))
+            logger.info(f"同步进度：{lance_table} [{synced}/{total}]")
 
         self._update_sync_record(lance_table, max_id)
-        logger.info(f"同步完成：{lance_table}，最大 message_id = {max_id}")
-        return True
+        logger.info(f"同步完成：{lance_table}，共 {synced}/{total} 条，最大 message_id = {max_id}")
+        return {"success": True, "synced": synced, "total": total, "max_id": max_id}
 
-    def sync_recent_tables(self, sqlite_conn, group_id: str, days: int = 3, cleanup_days: int = 7):
+    def sync_recent_tables(self, sqlite_conn, group_id: str, days: int = 3, cleanup_days: int = 7) -> Dict:
         """
         同步最近 N 天的所有表，并自动清理超过保留天数的旧表
         :param sqlite_conn: SQLite 连接对象
         :param group_id: QQ 群号
         :param days: 回溯天数（默认 3 天）
         :param cleanup_days: 数据保留天数（默认 7 天）
+        :return: 统计字典 {group_id, days, tables: [{date, success, synced, total}]}
         """
         today = datetime.now()
+        tables = []
+        total_synced = 0
+        total_rows = 0
         for i in range(days):
             date_str = (today - timedelta(days=i)).strftime("%Y%m%d")
-            self.sync_table(sqlite_conn, group_id, date_str)
-        self.cleanup_group_tables(group_id, retention_days=cleanup_days)
+            res = self.sync_table(sqlite_conn, group_id, date_str)
+            tables.append({
+                "date": date_str,
+                "success": res.get("success", False),
+                "synced": res.get("synced", 0),
+                "total": res.get("total", 0),
+            })
+            total_synced += res.get("synced", 0)
+            total_rows += res.get("total", 0)
+
+        deleted = self.cleanup_group_tables(group_id, retention_days=cleanup_days)
+        return {
+            "group_id": group_id,
+            "days": days,
+            "tables": tables,
+            "total_synced": total_synced,
+            "total_rows": total_rows,
+            "deleted_tables": deleted,
+        }
 
     def cleanup_group_tables(self, group_id: str, retention_days: int = 7):
         """

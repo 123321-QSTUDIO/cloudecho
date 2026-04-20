@@ -260,11 +260,13 @@ def sync_vectorstore():
 
                 synced_tables = []
                 for date_str in sorted(date_set):
-                    success = rag_engine.vector_store.sync_table(conn, group_id, date_str)
+                    res = rag_engine.vector_store.sync_table(conn, group_id, date_str)
                     synced_tables.append({
                         "date": date_str,
                         "table": f"group_{group_id}_{date_str}",
-                        "success": success
+                        "success": res.get("success", False),
+                        "synced": res.get("synced", 0),
+                        "total": res.get("total", 0),
                     })
 
                 sync_results.append({
