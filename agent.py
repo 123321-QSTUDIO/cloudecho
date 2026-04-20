@@ -351,6 +351,26 @@ class Agent:
         Agent 主入口
         :return: 包含 response、tool_calls_history、rewritten_query 的字典
         """
+        try:
+            return self._run_impl(group_id, user_id, user_name, content, cache_messages)
+        except Exception as e:
+            logger.exception(f"Agent run 发生未捕获异常：{str(e)}")
+            err_msg = "（我这边出了点问题，暂时没法回答，稍后再试试？[CQ:face,id=28]）"
+            return {
+                "response": err_msg,
+                "sources": [],
+                "tool_calls_history": [],
+                "rewritten_query": content,
+            }
+
+    def _run_impl(
+        self,
+        group_id: str,
+        user_id: str,
+        user_name: str,
+        content: str,
+        cache_messages: List[Dict],
+    ) -> Dict[str, Any]:
         logger.info(f"Agent 收到请求：群 {group_id}，用户 {user_id}，消息 '{content[:30]}...'")
 
         # 初始化工具
@@ -385,8 +405,17 @@ class Agent:
                     max_tokens=800,
                 )
             except Exception as e:
-                logger.error(f"LLM 流式调用失败：{str(e)}")
-                raise RuntimeError(f"LLM 流式调用失败：{str(e)}")
+                logger.error(f"LLM 调用失败：{str(e)}")
+                final_response = "（我这边出了点问题，暂时没法回答，稍后再试试？[CQ:face,id=28]）"
+                if self.db_manager:
+                    self.db_manager.save_conversation_turn(group_id, user_id, user_name, "user", content)
+                    self.db_manager.save_conversation_turn(group_id, user_id, "DeepSleep", "assistant", final_response)
+                return {
+                    "response": final_response,
+                    "sources": [],
+                    "tool_calls_history": tool_calls_history,
+                    "rewritten_query": rewritten_query or content,
+                }
 
             # 提取模型返回内容
             assistant_message = result.get("message", {})
@@ -504,6 +533,21 @@ class Agent:
         - tool_result: {"type": "tool_result", "tool": str, "result": str}
         - response_complete: {"type": "response_complete", "content": str}
         """
+        try:
+            yield from self._run_stream_impl(group_id, user_id, user_name, content, cache_messages)
+        except Exception as e:
+            logger.exception(f"Agent run_stream 发生未捕获异常：{str(e)}")
+            err_msg = "（我这边出了点问题，暂时没法回答，稍后再试试？[CQ:face,id=28]）"
+            yield {"type": "response_complete", "content": err_msg}
+
+    def _run_stream_impl(
+        self,
+        group_id: str,
+        user_id: str,
+        user_name: str,
+        content: str,
+        cache_messages: List[Dict],
+    ):
         logger.info(f"Agent 收到请求：群 {group_id}，用户 {user_id}，消息 '{content[:30]}...'")
 
         rag_tool = RAGSearchTool(self.rag_engine, group_id, self.llm_client)
@@ -577,7 +621,12 @@ class Agent:
 
             except Exception as e:
                 logger.error(f"LLM 流式调用失败：{str(e)}")
-                raise RuntimeError(f"LLM 流式调用失败：{str(e)}")
+                err = "（我这边出了点问题，暂时没法回答，稍后再试试？[CQ:face,id=28]）"
+                yield {"type": "response_complete", "content": err}
+                if self.db_manager:
+                    self.db_manager.save_conversation_turn(group_id, user_id, user_name, "user", content)
+                    self.db_manager.save_conversation_turn(group_id, user_id, "DeepSleep", "assistant", err)
+                return
 
             tool_calls_list = [current_tool_calls[i] for i in sorted(current_tool_calls.keys())]
             if tool_calls_list and final_finish_reason != "tool_calls":
