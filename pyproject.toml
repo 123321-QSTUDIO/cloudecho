@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "云忆 CloudEcho - 为群聊注入记忆的 RAG Agent"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "GPL-3.0-or-later"}
+license = "GPL-3.0-or-later"
 authors = [
     {name = "Author"},
 ]
@@ -29,6 +29,8 @@ dependencies = [
     "optimum[onnxruntime]>=1.17.0",
     "numpy>=1.26.0",
     "pandas>=2.0.0",
+    "rich>=13.0.0",
+    "prompt_toolkit>=3.0.0",
 ]
 
 [project.scripts]
@@ -47,6 +49,7 @@ py-modules = [
     "database",
     "embedding_client",
     "llm_client",
+    "model_manager",
     "rag_engine",
     "reranker",
     "vector_store",
