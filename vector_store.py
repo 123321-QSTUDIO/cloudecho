@@ -102,6 +102,17 @@ class LanceDBManager:
         last_synced_id = self._get_sync_record(lance_table)
 
         try:
+            # 检查表是否存在
+            check_cursor = sqlite_conn.execute(
+                f"SELECT name FROM sqlite_master WHERE type='table' AND name=?", (sqlite_table,)
+            )
+            if not check_cursor.fetchone():
+                # 如果是今天的表，可能还没产生消息，不报错
+                if date_str == datetime.now().strftime("%Y%m%d"):
+                    return False
+                logger.warning(f"跳过同步：SQLite 表 {sqlite_table} 不存在")
+                return False
+
             cursor = sqlite_conn.execute(
                 f"SELECT id, group_id, user_name, user_id, time, content FROM {sqlite_table} "
                 f"WHERE group_id = ? AND id > ? ORDER BY id ASC",
@@ -149,7 +160,12 @@ class LanceDBManager:
                     tbl = self.db.open_table(lance_table)
                     tbl.add(pa_table)
                 except Exception:
-                    self.db.create_table(lance_table, data=pa_table)
+                    tbl = self.db.create_table(lance_table, data=pa_table)
+                    # 为新表创建全文索引以支持文本匹配
+                    try:
+                        tbl.create_fts_index("content", replace=True)
+                    except Exception as e:
+                        logger.warning(f"创建全文索引失败: {e}")
             except Exception as e:
                 logger.error(f"写入 LanceDB 批次 {start} 失败：{str(e)}")
                 return False
@@ -242,6 +258,41 @@ class LanceDBManager:
             logger.error(f"全局清理旧向量表时出错：{str(e)}")
 
         return deleted
+
+    def search_fts(self, group_id: str, query: str, date_str: str, top_k: int = 20) -> List[Dict]:
+        """
+        在指定群_日期的 LanceDB 表中执行全文搜索
+        :param group_id: QQ 群号
+        :param query: 搜索关键词
+        :param date_str: 日期字符串（YYYYMMDD）
+        :param top_k: 返回结果数
+        :return: 候选消息列表
+        """
+        lance_table = self._get_table_name(group_id, date_str)
+        try:
+            tbl = self.db.open_table(lance_table)
+            # 使用全文搜索
+            results = (
+                tbl.search(query)
+                .limit(top_k)
+                .to_pandas()
+            )
+            results["source"] = "history_fts"
+            return results.to_dict("records")
+        except Exception:
+            return []
+
+    def search_multi_days_fts(self, group_id: str, query: str, days: int = 3, top_k_per_day: int = 20) -> List[Dict]:
+        """
+        在最近 N 天的多个表中执行全文搜索并合并
+        """
+        today = datetime.now()
+        all_results = []
+        for i in range(days):
+            date_str = (today - timedelta(days=i)).strftime("%Y%m%d")
+            day_results = self.search_fts(group_id, query, date_str, top_k_per_day)
+            all_results.extend(day_results)
+        return all_results
 
     def search(self, group_id: str, query_vector: np.ndarray, date_str: str, top_k: int = 20) -> List[Dict]:
         """

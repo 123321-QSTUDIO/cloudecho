@@ -20,6 +20,7 @@ Data.db
 *.db-shm
 *.db-wal
 VectorDB/
+.cli_history
 
 # 本地模型目录（首次启动自动下载，不应提交到 Git）
 models/

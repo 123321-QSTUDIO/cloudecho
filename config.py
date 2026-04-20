@@ -8,8 +8,14 @@ QQ 群 LLM API 服务配置
 
 import os
 
-# 计算固定基准目录
-_AI_DIR = os.path.dirname(os.path.abspath(__file__))
+# 计算基准目录：优先检查是否存在名为 AI 的子目录（独立运行模式）
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.exists(os.path.join(_BASE_DIR, 'AI')) and os.path.isdir(os.path.join(_BASE_DIR, 'AI')):
+    _AI_DIR = os.path.join(_BASE_DIR, 'AI')
+else:
+    # 否则认为当前目录即为 AI 目录（插件环境模式）
+    _AI_DIR = _BASE_DIR
+
 _PLUGIN_DIR = os.path.dirname(_AI_DIR)
 
 
@@ -20,7 +26,7 @@ class Config:
     PORT = int(os.getenv('API_PORT', 5000))
     DEBUG = os.getenv('API_DEBUG', 'False').lower() == 'true'
 
-    # 数据库配置（默认在 AI 子目录内）
+    # 数据库配置（确保指向正确的 Data.db）
     DB_PATH = os.getenv('DB_PATH', os.path.join(_AI_DIR, 'Data.db'))
     VECTOR_DB_PATH = os.getenv('VECTOR_DB_PATH', os.path.join(_AI_DIR, 'VectorDB'))
 

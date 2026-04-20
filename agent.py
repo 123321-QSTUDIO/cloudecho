@@ -39,52 +39,45 @@ class Tool:
 
 
 class RAGSearchTool(Tool):
-    """RAG 检索工具：搜索群聊历史和缓存消息"""
+    """RAG 检索工具：搜索群聊历史档案（长期记忆）"""
 
     name = "rag_search"
     description = (
-        "搜索指定 QQ 群的聊天记录（包括已持久化到数据库的历史消息和未写入数据库的近期缓存消息），"
-        "返回与查询话题相关的上下文文本。当用户问题可能涉及群内往事、人物、事件、讨论内容时，"
-        "必须优先调用此工具获取上下文后再作答。"
+        "检索该 QQ 群的长期聊天档案。仅当用户询问过去发生过的事情、"
+        "某人的历史言论、或需要了解群内话题的历史背景时使用。"
+        "注意：此工具仅包含已持久化的历史记录，不包含当前正在进行的对话内容。"
     )
     parameters = {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "用于搜索的查询语句，建议简洁明确，能准确描述用户想了解的话题",
+                "description": "用于历史档案检索的关键词或查询语句",
             },
         },
         "required": ["query"],
     }
 
-    def __init__(self, rag_engine: RAGEngine, group_id: str, cache_messages: List[Dict]):
+    def __init__(self, rag_engine: RAGEngine, group_id: str, llm_client: LLMClient):
         self.rag_engine = rag_engine
         self.group_id = group_id
-        self.cache_messages = cache_messages
+        self.llm_client = llm_client
 
     def execute(self, query: str) -> str:
-        logger.info(f"Agent 调用 rag_search: query='{query}'")
+        logger.info(f"Agent 调用 rag_search (长期记忆): query='{query}'")
         try:
-            candidates = self.rag_engine.hybrid_retrieve(self.group_id, query, self.cache_messages)
-            ranked = self.rag_engine.rerank_candidates(query, candidates)
-            context = self.rag_engine.build_context(ranked)
-            # 缓存来源摘要，供最终响应返回
-            self._last_sources = [
-                {
-                    "user_name": c.get("user_name", ""),
-                    "user_id": c.get("user_id", ""),
-                    "time": c.get("time", ""),
-                    "content": c.get("content", "")[:100],
-                    "score": round(c.get("rerank_score", 0.0), 4),
-                    "source": c.get("source", "history"),
-                }
-                for c in ranked
-            ]
-            return context
+            res = self.rag_engine.query(self.group_id, query, self.llm_client)
+            context = res["context"]
+            self._last_sources = res["sources"]
+            
+            # 统计信息透传
+            stats = res.get("stats", {})
+            stats_str = f"RAG_STATS:{stats.get('vector_count', 0)},{stats.get('fts_count', 0)},{stats.get('final_count', 0)}"
+            
+            return f"{context}\n\n<!-- {stats_str} -->"
         except Exception as e:
             logger.error(f"rag_search 执行失败：{str(e)}")
-            return f"（检索失败：{str(e)}）"
+            return f"（历史检索失败：{str(e)}）"
 
 
 class Agent:
@@ -202,7 +195,7 @@ class Agent:
         logger.info(f"Agent 收到请求：群 {group_id}，用户 {user_id}，消息 '{content[:30]}...'")
 
         # 初始化工具
-        rag_tool = RAGSearchTool(self.rag_engine, group_id, cache_messages)
+        rag_tool = RAGSearchTool(self.rag_engine, group_id, self.llm_client)
         tools = [rag_tool]
         tools_schema = [t.to_openai_schema() for t in tools]
         tool_map = {t.name: t for t in tools}
