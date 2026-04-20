@@ -5,6 +5,7 @@ LanceDB 向量存储管理器
 按群号_日期分表，支持从 SQLite 自动增量同步
 """
 
+import json
 import os
 import logging
 from datetime import datetime, timedelta
@@ -26,25 +27,48 @@ class LanceDBManager:
         self.embedding_client = embedding_client or EmbeddingClient()
         self._ensure_dir()
         self.db = lancedb.connect(self.db_path)
-        self._sync_meta_table = "_sync_metadata"
-        self._ensure_sync_meta_table()
+        # 同步元数据改用 JSON 文件存储，避免 LanceDB drop+create 的持久化问题
+        self._sync_meta_path = os.path.join(self.db_path, ".sync_meta.json")
+        self._migrate_legacy_sync_meta()
 
     def _ensure_dir(self):
         """确保向量数据库目录存在"""
         if not os.path.exists(self.db_path):
             os.makedirs(self.db_path, exist_ok=True)
 
-    def _ensure_sync_meta_table(self):
-        """确保同步元数据表存在，用于记录每张表的已同步最大 message_id"""
+    def _migrate_legacy_sync_meta(self):
+        """将旧版 LanceDB _sync_metadata 表中的数据迁移到 JSON 文件"""
+        if os.path.exists(self._sync_meta_path):
+            return
         try:
-            self.db.open_table(self._sync_meta_table)
+            tbl = self.db.open_table("_sync_metadata")
+            df = tbl.to_pandas()
+            meta = {}
+            for _, row in df.iterrows():
+                meta[str(row["table_name"])] = int(row["last_message_id"])
+            if meta:
+                self._save_sync_meta(meta)
+                logger.info(f"已从旧版 _sync_metadata 迁移 {len(meta)} 条记录到 JSON")
         except Exception:
-            schema = pa.schema([
-                pa.field("table_name", pa.string()),
-                pa.field("last_message_id", pa.int64()),
-                pa.field("updated_at", pa.string()),
-            ])
-            self.db.create_table(self._sync_meta_table, schema=schema)
+            pass
+
+    def _load_sync_meta(self) -> Dict[str, int]:
+        """从 JSON 文件加载同步元数据"""
+        try:
+            if os.path.exists(self._sync_meta_path):
+                with open(self._sync_meta_path, "r", encoding="utf-8") as f:
+                    return {k: int(v) for k, v in json.load(f).items()}
+        except Exception as e:
+            logger.warning(f"读取同步元数据失败：{e}")
+        return {}
+
+    def _save_sync_meta(self, meta: Dict[str, int]):
+        """保存同步元数据到 JSON 文件"""
+        try:
+            with open(self._sync_meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存同步元数据失败：{e}")
 
     def _get_table_name(self, group_id: str, date_str: str) -> str:
         """生成 LanceDB 表名：group_{group_id}_{YYYYMMDD}"""
@@ -52,42 +76,15 @@ class LanceDBManager:
 
     def _get_sync_record(self, table_name: str) -> int:
         """获取某张表已同步的最大 message_id"""
-        try:
-            tbl = self.db.open_table(self._sync_meta_table)
-            df = tbl.to_pandas()
-            row = df[df["table_name"] == table_name]
-            if not row.empty:
-                return int(row.iloc[0]["last_message_id"])
-        except Exception:
-            pass
-        return 0
+        meta = self._load_sync_meta()
+        return meta.get(table_name, 0)
 
     def _update_sync_record(self, table_name: str, last_message_id: int):
         """更新同步元数据"""
-        try:
-            tbl = self.db.open_table(self._sync_meta_table)
-            # LanceDB 暂不支持单行 update，采用先读全表、替换行、再覆盖的方式
-            df = tbl.to_pandas()
-            # 过滤掉旧记录
-            records = []
-            for _, row in df.iterrows():
-                if row["table_name"] != table_name:
-                    records.append({
-                        "table_name": str(row["table_name"]),
-                        "last_message_id": int(row["last_message_id"]),
-                        "updated_at": str(row["updated_at"]),
-                    })
-            records.append({
-                "table_name": table_name,
-                "last_message_id": last_message_id,
-                "updated_at": datetime.now().isoformat(),
-            })
-            # 转换为 pyarrow Table
-            new_table = pa.Table.from_pylist(records)
-            self.db.drop_table(self._sync_meta_table)
-            self.db.create_table(self._sync_meta_table, data=new_table)
-        except Exception as e:
-            logger.error(f"更新同步元数据失败：{str(e)}")
+        meta = self._load_sync_meta()
+        meta[table_name] = last_message_id
+        self._save_sync_meta(meta)
+        logger.info(f"同步元数据已更新：{table_name} -> {last_message_id}")
 
     def sync_table(self, sqlite_conn, group_id: str, date_str: str) -> Dict:
         """
