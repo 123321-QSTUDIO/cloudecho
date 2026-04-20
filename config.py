@@ -2,62 +2,74 @@
 # -*- coding: utf-8 -*-
 """
 QQ 群 LLM API 服务配置
-默认路径基于本文件所在目录自动推导，适配酷Q目录结构：
-  酷Q根目录/app/CX Bot Test/AI/  <-- 本文件位置
+默认路径基于运行目录自动推导，适配两种部署模式：
+  1. CQ 插件模式：运行目录/app/CX Bot Test/AI/
+  2. 独立部署模式：运行目录本身即为数据根目录
 """
 
 import os
 
 
-def _resolve_ai_dir():
+def _resolve_dirs():
     """
-    推导 AI 数据目录的优先级：
-    1. 环境变量 AI_DIR（显式指定）
-    2. 当前工作目录的 AI/ 子目录存在 → 使用 cwd/AI（独立模式）
-    3. 当前工作目录本身就是 AI/ → 使用 cwd
-    4. 源码所在目录的 AI/ 子目录存在 → 使用源码目录/AI（开发模式）
-    5. 源码所在目录本身 → 回退
-    6. 最终回退：当前工作目录
+    推导 AI 数据目录和插件目录。
+    返回 (ai_dir, plugin_dir) 元组。
+
+    优先级：
+    1. CQ 插件环境：运行目录下存在 app/CX Bot Test/CxData.json
+       → ai_dir = app/CX Bot Test/AI, plugin_dir = app/CX Bot Test
+    2. 环境变量 AI_DIR（显式指定）
+    3. 当前目录下有 AI/ 子目录 → 使用 cwd/AI
+    4. 当前目录本身就是 AI/ → 使用 cwd
+    5. 源码所在目录下有 AI/ 子目录 → 开发模式回退
+    6. 源码所在目录本身 → 回退
+    7. 最终回退：当前工作目录
     """
     cwd = os.getcwd()
     src_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # 1. 环境变量
+    # 1. CQ 插件环境检测（最高优先级）
+    cq_plugin_dir = os.path.join(cwd, "app", "CX Bot Test")
+    cq_cxdata = os.path.join(cq_plugin_dir, "CxData.json")
+    if os.path.isfile(cq_cxdata):
+        return os.path.join(cq_plugin_dir, "AI"), cq_plugin_dir
+
+    # 2. 环境变量
     env_ai_dir = os.getenv("AI_DIR")
     if env_ai_dir:
-        return os.path.abspath(env_ai_dir)
+        ai = os.path.abspath(env_ai_dir)
+        return ai, os.path.dirname(ai)
 
-    # 2. 当前目录下有 AI/ 子目录（独立部署：用户在项目根目录运行）
+    # 3. 当前目录下有 AI/ 子目录
     cwd_ai = os.path.join(cwd, "AI")
     if os.path.isdir(cwd_ai):
-        return cwd_ai
+        return cwd_ai, cwd
 
-    # 3. 当前目录本身就是 AI/
+    # 4. 当前目录本身就是 AI/
     if os.path.basename(cwd).upper() == "AI":
-        return cwd
+        return cwd, os.path.dirname(cwd)
 
-    # 4. 源码目录下有 AI/ 子目录（开发模式：从 git 仓库运行）
+    # 5. 源码目录下有 AI/ 子目录（开发模式）
     src_ai = os.path.join(src_dir, "AI")
     if os.path.isdir(src_ai):
-        return src_ai
+        return src_ai, src_dir
 
-    # 5. 源码目录本身
+    # 6. 源码目录本身
     if os.path.basename(src_dir).upper() == "AI":
-        return src_dir
+        return src_dir, os.path.dirname(src_dir)
 
-    # 6. 默认：当前工作目录（最符合服务器部署直觉）
-    return cwd
+    # 7. 默认：当前工作目录
+    return cwd, cwd
 
 
-_AI_DIR = _resolve_ai_dir()
-_PLUGIN_DIR = os.path.dirname(_AI_DIR) if os.path.basename(_AI_DIR).upper() == "AI" else _AI_DIR
+_AI_DIR, _PLUGIN_DIR = _resolve_dirs()
 
 
 class Config:
     """API 服务器配置类"""
     # 服务器配置
     HOST = os.getenv('API_HOST', '0.0.0.0')
-    PORT = int(os.getenv('API_PORT', 5000))
+    PORT = int(os.getenv('API_PORT', '5000'))
     DEBUG = os.getenv('API_DEBUG', 'False').lower() == 'true'
 
     # 数据库配置（确保指向正确的 Data.db）
@@ -74,7 +86,7 @@ class Config:
         os.path.join(_AI_DIR, 'models', 'bge-reranker-base')
     )
 
-    # 群配置文件（默认在 AI 的父目录 CX Bot Test 下）
+    # 群配置文件（默认在插件目录下）
     CXDATA_PATH = os.getenv('CXDATA_PATH', os.path.join(_PLUGIN_DIR, 'CxData.json'))
 
     # LLM 配置
