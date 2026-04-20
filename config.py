@@ -8,15 +8,49 @@ QQ 群 LLM API 服务配置
 
 import os
 
-# 计算基准目录：优先检查是否存在名为 AI 的子目录（独立运行模式）
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if os.path.exists(os.path.join(_BASE_DIR, 'AI')) and os.path.isdir(os.path.join(_BASE_DIR, 'AI')):
-    _AI_DIR = os.path.join(_BASE_DIR, 'AI')
-else:
-    # 否则认为当前目录即为 AI 目录（插件环境模式）
-    _AI_DIR = _BASE_DIR
 
-_PLUGIN_DIR = os.path.dirname(_AI_DIR)
+def _resolve_ai_dir():
+    """
+    推导 AI 数据目录的优先级：
+    1. 环境变量 AI_DIR（显式指定）
+    2. 当前工作目录的 AI/ 子目录存在 → 使用 cwd/AI（独立模式）
+    3. 当前工作目录本身就是 AI/ → 使用 cwd
+    4. 源码所在目录的 AI/ 子目录存在 → 使用源码目录/AI（开发模式）
+    5. 源码所在目录本身 → 回退
+    6. 最终回退：当前工作目录
+    """
+    cwd = os.getcwd()
+    src_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # 1. 环境变量
+    env_ai_dir = os.getenv("AI_DIR")
+    if env_ai_dir:
+        return os.path.abspath(env_ai_dir)
+
+    # 2. 当前目录下有 AI/ 子目录（独立部署：用户在项目根目录运行）
+    cwd_ai = os.path.join(cwd, "AI")
+    if os.path.isdir(cwd_ai):
+        return cwd_ai
+
+    # 3. 当前目录本身就是 AI/
+    if os.path.basename(cwd).upper() == "AI":
+        return cwd
+
+    # 4. 源码目录下有 AI/ 子目录（开发模式：从 git 仓库运行）
+    src_ai = os.path.join(src_dir, "AI")
+    if os.path.isdir(src_ai):
+        return src_ai
+
+    # 5. 源码目录本身
+    if os.path.basename(src_dir).upper() == "AI":
+        return src_dir
+
+    # 6. 默认：当前工作目录（最符合服务器部署直觉）
+    return cwd
+
+
+_AI_DIR = _resolve_ai_dir()
+_PLUGIN_DIR = os.path.dirname(_AI_DIR) if os.path.basename(_AI_DIR).upper() == "AI" else _AI_DIR
 
 
 class Config:
