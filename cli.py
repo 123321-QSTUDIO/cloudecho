@@ -10,6 +10,7 @@ import argparse
 import sys
 import io
 import os
+import re
 import warnings
 import time
 
@@ -433,7 +434,6 @@ def main():
                     
                     if tool_name == "rag_search":
                         # 提取隐藏的统计信息：<!-- RAG_STATS:v,f,n -->
-                        import re
                         stats_match = re.search(r"<!-- RAG_STATS:(\d+),(\d+),(\d+) -->", result)
                         
                         if stats_match:
